@@ -1,0 +1,171 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import re
+import json
+import os
+from datetime import datetime
+import schedule
+import time
+
+# Serper API key
+SERPER_API_KEY = "8dc237efbd2444da2080ce4a725278855698c88a"
+
+# Only Roya.com as competitor
+COMPETITORS = ["Roya"]
+
+# Cities and verticals list
+CITIES = ["San Diego", "Tulsa"]
+VERTICALS = ["dentistry", "cardiology"]
+
+# File to store previously seen URLs
+PREVIOUS_URLS_FILE = "previous_urls.json"
+
+# Function to load previously seen URLs
+def load_previous_urls():
+    if os.path.exists(PREVIOUS_URLS_FILE):
+        with open(PREVIOUS_URLS_FILE, "r") as f:
+            return set(json.load(f))
+    return set()
+
+# Function to save URLs to file
+def save_previous_urls(urls):
+    with open(PREVIOUS_URLS_FILE, "w") as f:
+        json.dump(list(urls), f)
+
+# Function to search Google using Serper API
+def search_clinics(vertical, city):
+    query = f'"Powered by Roya" {vertical} {city} site:*.com -inurl:(signup | login)'
+    url = "https://google.serper.dev/search"
+    headers = {
+        "X-API-KEY": SERPER_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "q": query,
+        "num": 10
+    }
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        results = response.json()
+        organic_results = results.get("organic", [])
+        return organic_results
+    except Exception as e:
+        print(f"Serper API Error: {e}")
+        return []
+
+# Enhanced function to scrape website for Roya.com detection
+def scrape_website(url):
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        response = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(response.content, "html.parser")
+        
+        footer = soup.find("footer") or soup.body
+        text = soup.get_text().lower()
+        roya_signatures = [
+            "roya", 
+            "powered by roya", 
+            "roya marketing", 
+            "roya analytics"
+        ]
+        
+        for signature in roya_signatures:
+            if signature in text:
+                return "Roya"
+        
+        meta = soup.find("meta", {"name": "generator"}) or soup.find("meta", {"name": "author"})
+        if meta and "roya" in meta.get("content", "").lower():
+            return "Roya"
+            
+        return "Unknown"
+    except Exception as e:
+        print(f"Error scraping {url}: {e}")
+        return "Unknown"
+
+# Improved credential extraction
+def extract_credentials(text):
+    credentials = re.search(r"(MD|DDS|DMD|DO|DC|DPM|VMD|DVM|PhD)", text, re.IGNORECASE)
+    return credentials.group(0) if credentials else ""
+
+# Main function to collect and save data
+def prospect_clinics():
+    # Load previously seen URLs
+    previous_urls = load_previous_urls()
+    
+    data = {
+        "Clinic Name": [],
+        "Provider Name": [],
+        "Website URL": [],
+        "City": [],
+        "State": [],
+        "Healthcare Vertical": [],
+        "Website Provider": []
+    }
+
+    for vertical in VERTICALS:
+        for city in CITIES:
+            print(f"Searching: {vertical} {city} for Roya")
+            results = search_clinics(vertical, city)
+            
+            for result in results:
+                title = result.get("title", "Unknown")
+                url = result.get("link", "Unknown")
+                
+                # Skip if URL was already processed
+                if url in previous_urls:
+                    print(f"Skipping already processed URL: {url}")
+                    continue
+                
+                detected_provider = scrape_website(url)
+                if detected_provider == "Roya":  # Only include Roya.com sites
+                    credentials = extract_credentials(title)
+                    provider_name = "Dr. Unknown"  # Placeholder, can be improved with scraping
+                    
+                    data["Clinic Name"].append(title)
+                    data["Provider Name"].append(f"{provider_name} {credentials}".strip())
+                    data["Website URL"].append(url)
+                    data["City"].append(city)
+                    data["State"].append("CA" if city == "San Diego" else "OK")
+                    data["Healthcare Vertical"].append(vertical)
+                    data["Website Provider"].append(detected_provider)
+                    
+                    # Add URL to previous_urls
+                    previous_urls.add(url)
+
+    # Save new data to Excel with timestamp
+    if data["Website URL"]:  # Only save if there's new data
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"roya_clinic_prospects_{timestamp}.xlsx"
+        df = pd.DataFrame(data)
+        df.to_excel(filename, index=False)
+        print(f"Data saved to {filename}")
+        
+        # Update the previous URLs file
+        save_previous_urls(previous_urls)
+    else:
+        print("No new data found this run.")
+
+# Weekly job function
+def job():
+    print(f"Running weekly job at {datetime.now()}")
+    prospect_clinics()
+
+# Kickoff function for manual or uv invocation
+def kickoff():
+    """Entry point for running the script manually or via uv."""
+    print(f"Kickoff initiated at {datetime.now()}")
+    prospect_clinics()
+
+# Scheduler setup
+def run_scheduler():
+    schedule.every().monday.at("09:00").do(job)
+    print("Scheduler started. Waiting for the next run...")
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+if __name__ == "__main__":
+    # By default, run the scheduler when the script is executed directly
+    run_scheduler()

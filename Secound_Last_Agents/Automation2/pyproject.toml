@@ -1,0 +1,26 @@
+[project]
+name = "automation2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Owais Noorani", email = "owaisabbasi331@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4>=4.13.3",
+    "crewai>=0.105.0",
+    "lite>=0.1.5",
+    "llm>=0.23",
+    "pandas>=2.2.3",
+    "requests>=2.32.3",
+    "schedule>=1.2.2",
+    "v>=1",
+]
+
+[project.scripts]
+automation2 = "automation2:main"
+GO = "Automation2:run_scheduler"
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
